@@ -102,16 +102,46 @@ function tail(text, max = 12_000) {
   return text.length > max ? `...(${text.length - max} chars cut)\n${text.slice(-max)}` : text;
 }
 
+function resolvePython() {
+  const candidates = [process.env.PYTHON, "python3", "python", "py"];
+  for (const cmd of candidates) {
+    if (!cmd) continue;
+    try {
+      const res = spawnSync(cmd, ["--version"], { encoding: "utf8" });
+      if (res.status === 0) return cmd;
+    } catch {}
+  }
+  return "python3";
+}
+const PYTHON_CMD = resolvePython();
+const hasPandoc = (() => { try { return spawnSync("pandoc", ["--version"]).status === 0; } catch { return false; } })();
+
 // First use on a machine installs each skill's dependencies with the skill's own setup.sh.
 const setupDone = new Set();
 function ensureSetup(skillDir, readyCheck) {
   if (setupDone.has(skillDir) || readyCheck()) { setupDone.add(skillDir); return; }
-  const r = run("bash", [path.join(skillDir, "setup.sh")], { cwd: skillDir, timeoutMs: 600_000 });
+  const setupScript = path.join(skillDir, "setup.sh");
+  if (fs.existsSync(setupScript)) {
+    const content = fs.readFileSync(setupScript, "utf8");
+    if (content.includes("\r\n")) {
+      try {
+        fs.writeFileSync(setupScript, content.replace(/\r\n/g, "\n"), "utf8");
+      } catch {}
+    }
+  }
+  const args = process.platform === "win32" ? ["./setup.sh"] : [setupScript];
+  const r = run("bash", args, { cwd: skillDir, timeoutMs: 600_000 });
   if (!r.ok) throw new ToolError(`setup.sh in ${skillDir} failed:\n${tail(r.out)}`);
   setupDone.add(skillDir);
 }
 const archifyReady = () => fs.existsSync(path.join(ARCHIFY, "node_modules", "@napi-rs", "canvas"));
-const designDocReady = () => run("python3", ["-c", "import docx"]).ok;
+const designDocReady = () => {
+  const vendorDir = DESIGN_DOC ? path.join(DESIGN_DOC, "vendor", "python") : "";
+  const code = vendorDir
+    ? `import sys; sys.path.insert(0, ${JSON.stringify(vendorDir)}); import docx`
+    : "import docx";
+  return run(PYTHON_CMD, ["-c", code]).ok;
+};
 
 // A tool input is either an absolute path or, for remote callers, the file's text,
 // which is written to a fresh temp folder and then handled like a path.
@@ -145,7 +175,7 @@ function dropTempInput(file) {
 // a tool error: the model must not start "fixing" a figure that never got checked.
 function runCheck(script, args, { cwd, report }) {
   if (!fs.existsSync(script)) throw new ToolError(`${path.basename(script)} is missing from the skills folder (${script}).`);
-  const r = run(script.endsWith(".py") ? "python3" : process.execPath, [script, ...args], { cwd, timeoutMs: 60_000 });
+  const r = run(script.endsWith(".py") ? PYTHON_CMD : process.execPath, [script, ...args], { cwd, timeoutMs: 60_000 });
   if ((r.code === 0 || r.code === 1) && report.test(r.out)) return r;
   throw new ToolError(`${path.basename(script)} did not run to completion${r.code === undefined ? "" : ` (exit ${r.code})`}:\n${tail(r.out)}`);
 }
@@ -161,7 +191,7 @@ function publish(files) {
   const script = process.env.AWS_ARCH_PUBLISH_SCRIPT || path.join(HERE, "..", "hosted", "container", "publish.py");
   if (!fs.existsSync(script)) return "";
   const prefix = `mcp/${new Date().toISOString().slice(0, 10)}/${crypto.randomBytes(4).toString("hex")}`;
-  const r = run("python3", [script, "--prefix", prefix, ...files], { timeoutMs: 120_000 });
+  const r = run(PYTHON_CMD, [script, "--prefix", prefix, ...files], { timeoutMs: 120_000 });
   if (!r.ok) throw new ToolError(`Upload to S3 failed:\n${tail(r.out, 4000)}`);
   const links = r.out.split("\n").flatMap((line) => {
     try { const o = JSON.parse(line); return o?.url ? [o] : []; } catch { return []; }
@@ -398,12 +428,16 @@ const TOOLS = [
         const built = [];
         let ok = true;
         for (const fmt of want) {
+          if (fmt === "docx" && !hasPandoc && !formats?.includes("docx")) {
+            results.push("== docx: SKIPPED\nnote: pandoc is required for Word output (see https://pandoc.org/installing.html)");
+            continue;
+          }
           const script = path.join(DESIGN_DOC, "scripts", fmt === "html" ? "build-html.py" : "build-docx.py");
           const args = [script, md];
           if (strict) args.push("--strict");
           // Hosted, a pasted document must not pull other server files into its output.
           if (REMOTE) args.push("--confine");
-          const r = run("python3", args, { cwd: path.dirname(md) });
+          const r = run(PYTHON_CMD, args, { cwd: path.dirname(md) });
           ok &&= r.ok;
           const out = outPath(fmt);
           if (r.ok && fs.existsSync(out)) built.push(out);
@@ -480,7 +514,7 @@ const HARNESS_ARN = process.env.AWS_ARCH_HARNESS_ARN;
 function askHarness(message, sessionId) {
   const script = process.env.AWS_ARCH_ASK_SCRIPT || path.join(HERE, "..", "hosted", "container", "ask_harness.py");
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", [script], { stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(PYTHON_CMD, [script], { stdio: ["pipe", "pipe", "pipe"] });
     let out = "", err = "";
     child.stdout.on("data", (d) => { out += d; });
     child.stderr.on("data", (d) => { err += d; });

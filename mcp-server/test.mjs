@@ -99,9 +99,10 @@ for (const f of fs.readdirSync(docDir)) if (/\.(html|docx)$/.test(f)) fs.rmSync(
 const md = path.join(docDir, "RAG-ASSISTANT-HLD.md");
 const lint = await tool("lint_doc", { markdown_path: md });
 expect("lint_doc returns a real report", !lint.isError && /^(PASS|FAIL)\n/.test(lint.content[0].text) && /lint: \d+ error\(s\)/.test(lint.content[0].text), lint.content[0].text);
+const hasPandoc = (() => { try { return spawnSync("pandoc", ["--version"]).status === 0; } catch { return false; } })();
 const build = await tool("build_design_doc", { markdown_path: md, strict: false });
 expect("build_design_doc writes html and docx",
-  !build.isError && fs.existsSync(path.join(docDir, "rag-assistant-hld.html")) && fs.existsSync(path.join(docDir, "rag-assistant-hld.docx")),
+  !build.isError && fs.existsSync(path.join(docDir, "rag-assistant-hld.html")) && (!hasPandoc || fs.existsSync(path.join(docDir, "rag-assistant-hld.docx"))),
   build.content[0].text);
 const pdf = await tool("build_design_doc", { markdown_path: md, formats: ["pdf"] });
 expect("build_design_doc refuses a format other than html and docx", pdf.isError === true && /formats must be/.test(pdf.content[0].text), pdf.content[0].text);
@@ -176,7 +177,7 @@ const sceneText = fs.readFileSync(path.join(REPO, "skills", "aws-archify", "asse
 const hRender = await httpTool("render_diagram", { scene_source: sceneText, png_width: 1600 });
 const hRenderText = hRender?.content?.[0]?.text ?? "";
 expect("http render_diagram from scene_source writes svg, png, drawio",
-  !hRender.isError && ["svg", "png", "drawio"].every((e) => hRenderText.split("\n").some((l) => l.startsWith("- /") && l.endsWith(`scene.${e}`))), hRenderText.slice(-1500));
+  !hRender.isError && ["svg", "png", "drawio"].every((e) => hRenderText.split("\n").some((l) => (/^-\s+(?:\/|[A-Za-z]:[\\/])/.test(l) || l.startsWith("- /")) && l.endsWith(`scene.${e}`))), hRenderText.slice(-1500));
 expect("http render_diagram returns download links",
   /Download links/.test(hRenderText) && /https:\/\/example\.com\/mcp\/\d{4}-\d{2}-\d{2}\/[0-9a-f]{8}\/scene\.svg/.test(hRenderText), hRenderText.slice(-800));
 
