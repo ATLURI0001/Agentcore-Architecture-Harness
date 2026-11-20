@@ -580,7 +580,16 @@ async function handle(msg, session) {
       return result(id, {});
     case "tools/list":
       return result(id, { tools: TOOLS.map(({ handler, ...t }) => (PLAIN_DESCRIPTIONS ? plainTool(t) : t)) });
+    case "prompts/list":
+      return result(id, { prompts: [] });
+    case "resources/list":
+      return result(id, { resources: [] });
+    case "resources/templates/list":
+      return result(id, { resourceTemplates: [] });
     case "tools/call": {
+      if (params?.arguments !== undefined && (params.arguments === null || typeof params.arguments !== "object" || Array.isArray(params.arguments))) {
+        return error(id, -32602, "Invalid params: arguments must be an object");
+      }
       const tool = TOOLS.find((t) => t.name === params?.name);
       if (!tool) return error(id, -32602, `Unknown tool: ${params?.name}`);
       const started = Date.now();
