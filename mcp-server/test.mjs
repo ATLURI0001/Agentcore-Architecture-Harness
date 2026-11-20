@@ -61,6 +61,15 @@ const list = await call("tools/list", {});
 const names = list.result.tools.map((t) => t.name);
 expect("tools/list has 8 tools", names.length === 8, names.join(", "));
 
+const promptsRes = await call("prompts/list", {});
+expect("prompts/list returns empty array", Array.isArray(promptsRes.result?.prompts) && promptsRes.result.prompts.length === 0);
+
+const resourcesRes = await call("resources/list", {});
+expect("resources/list returns empty array", Array.isArray(resourcesRes.result?.resources) && resourcesRes.result.resources.length === 0);
+
+const badArgs = await call("tools/call", { name: "find_icon", arguments: "not-an-object" });
+expect("tools/call refuses non-object arguments", badArgs.error?.code === -32602);
+
 const guide = await tool("get_authoring_guide", { topic: "diagram" });
 expect("get_authoring_guide diagram", !guide.isError && guide.content[0].text.includes("aws-archify"));
 
