@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import readline from "node:readline";
 import { fileURLToPath } from "node:url";
+import { sanitizePath, sanitizeResourceUri, validateSchemaContract } from "./schema_contract.mjs";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const REPO = path.join(HERE, "..");
@@ -56,6 +57,17 @@ function expect(label, cond, detail = "") {
 const init = await call("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "test", version: "0" } });
 expect("initialize", init.result?.serverInfo?.name === "aws-architecture-agent");
 server.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" })}\n`);
+
+expect("schema contract rejects missing required property",
+  validateSchemaContract({ type: "object", required: ["name"] }, {}).valid === false);
+expect("schema contract validates conforming object",
+  validateSchemaContract({ type: "object", required: ["name"], properties: { name: { type: "string" } } }, { name: "arch" }).valid === true);
+expect("sanitizePath blocks directory traversal",
+  sanitizePath("../etc/passwd").safe === false);
+expect("sanitizePath blocks null bytes",
+  sanitizePath("foo\0bar.txt").safe === false);
+expect("sanitizeResourceUri allows valid file URI",
+  sanitizeResourceUri("file:///safe/path").safe === true);
 
 const list = await call("tools/list", {});
 const names = list.result.tools.map((t) => t.name);
